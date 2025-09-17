@@ -1,238 +1,239 @@
-# OrderBook Implementation
+# Market Depth Visualization - Full Stack Application
 
-A high-performance order book implementation for financial market data processing, supporting both Market By Order (MBO) and Market By Price (MBP) data models.
+A high-performance market depth visualization system with separated backend and frontend applications, demonstrating real-time financial market data streaming with multiplexed WebSocket connections.
 
-## Overview
+## Project Structure
 
-This order book implementation provides a complete solution for managing and visualizing real-time market depth data. It supports both individual order tracking (MBO) and aggregated price level data (MBP), making it suitable for various trading applications.
-
-## Classes
-
-### Order Class
-
-Represents an individual order in the order book.
-
-#### Constructor
-```javascript
-new Order(id, price, quantity, side, timestamp = Date.now())
+```
+market-depth/
+├── backend/                # Rust WebSocket Server
+│   ├── src/               # Rust source code
+│   ├── Cargo.toml         # Rust dependencies
+│   └── README.md          # Backend documentation
+├── frontend/              # React Application
+│   ├── src/               # React source code
+│   ├── public/            # Static assets
+│   ├── package.json       # Node.js dependencies
+│   └── README.md          # Frontend documentation
+└── ROOT_README.md         # This file
 ```
 
-#### Properties
-- `id` (string): Unique order identifier
-- `price` (number): Order price (automatically parsed to float)
-- `quantity` (number): Order quantity (automatically parsed to integer)
-- `side` (string): Order side - either 'bid' or 'ask'
-- `timestamp` (number): Order creation/update timestamp
-- `originalQuantity` (number): Initial order quantity
+## Architecture Overview
 
-#### Methods
-- `update(newQuantity)`: Updates order quantity and timestamp
-- `getAge()`: Returns order age in milliseconds
+### Backend (Rust)
+- **High-performance WebSocket server** using Tokio and Tungstenite
+- **Multiplexed data streams** supporting concurrent MBO/MBP subscriptions
+- **Real-time order book simulation** with realistic market activity
+- **JSON-based message protocol** for client communication
+- **Multi-symbol support** with independent order books
 
-### OrderBook Class
+### Frontend (React)
+- **Real-time visualization** of market depth data
+- **Professional trading interface** with MBO/MBP modes
+- **WebSocket client** with automatic reconnection
+- **Responsive design** optimized for financial workflows
+- **Symbol selection** and connection monitoring
 
-Main order book implementation managing all orders and providing market data.
+## Quick Start (Both Applications)
 
-#### Constructor
-```javascript
-new OrderBook()
+### 1. Start Backend Server
+
+```bash
+# Navigate to backend
+cd backend
+
+# Run Rust server
+cargo run --bin server
+
+# Server starts on ws://127.0.0.1:8080
 ```
 
-#### Properties
-- `orders` (Map): Map of orderId → Order objects
-- `bidsByPrice` (Map): Map of price → Set of Order IDs for bid side
-- `asksByPrice` (Map): Map of price → Set of Order IDs for ask side
-- `sequence` (number): Monotonic sequence number for updates
+### 2. Start Frontend Application
 
-## Key Methods
+```bash
+# Open new terminal and navigate to frontend
+cd frontend
 
-### Order Management
+# Install dependencies (first time only)
+npm install
 
-#### `addOrder(order)`
-Adds or updates an order in the book.
-- **Parameters**: `order` (Order) - Order instance to add
-- **Behavior**: If order ID exists, removes old order first
+# Start React development server
+npm start
 
-#### `removeOrder(orderId)`
-Removes an order from the book.
-- **Parameters**: `orderId` (string) - Order ID to remove
-- **Returns**: boolean - true if order was found and removed
-
-#### `updateOrder(orderId, newQuantity)`
-Updates order quantity.
-- **Parameters**: 
-  - `orderId` (string) - Order ID to update
-  - `newQuantity` (number) - New quantity (order removed if ≤ 0)
-- **Returns**: boolean - true if order was found and updated
-
-### Market Data Access
-
-#### `getMBOData(maxLevels = 20)`
-Returns Market By Order data showing individual orders.
-- **Parameters**: `maxLevels` (number) - Maximum price levels to return
-- **Returns**: Object with structure:
-```javascript
-{
-  bids: [
-    {
-      orderId: "order_123",
-      price: 99.95,
-      quantity: 1000,
-      side: "bid",
-      timestamp: 1642684800000,
-      age: 5000
-    }
-  ],
-  asks: [...],
-  sequence: 150,
-  timestamp: 1642684805000
-}
+# Open browser to http://localhost:3000
 ```
 
-#### `getMBPData(maxLevels = 20)`
-Returns Market By Price data with aggregated price levels.
-- **Parameters**: `maxLevels` (number) - Maximum price levels to return
-- **Returns**: Object with structure:
-```javascript
-{
-  bids: [
-    {
-      price: 99.95,
-      quantity: 5000,
-      orderCount: 3,
-      avgAge: 15000,
-      side: "bid"
-    }
-  ],
-  asks: [...],
-  sequence: 150,
-  timestamp: 1642684805000
-}
+## Individual Setup
+
+### Backend Only
+
+```bash
+cd backend
+cargo run --bin server
 ```
 
-### Market Information
+The WebSocket server will be available at `ws://127.0.0.1:8080` and can be accessed by any WebSocket client.
 
-#### `getBestBidAsk()`
-Gets best bid and ask prices.
-- **Returns**: `{ bestBid: number|null, bestAsk: number|null }`
+### Frontend Only
 
-#### `getSpreadInfo()`
-Calculates spread and mid price.
-- **Returns**: Object with:
-```javascript
-{
-  spread: 0.05,           // Absolute spread
-  midPrice: 99.975,       // Mid price
-  spreadBps: 50.03        // Spread in basis points
-}
+```bash
+cd frontend
+npm install
+npm start
 ```
 
-### Market Simulation
+The React application will start at `http://localhost:3000` and attempt to connect to the backend server.
 
-#### `simulateMarketActivity()`
-Generates and executes random market activities.
-- **Returns**: Array of executed activities
-- **Behavior**: Executes 5-15 random activities (40% adds, 30% updates, 30% cancels)
+## Development Workflow
 
-#### `initializeWithSampleData()`
-Populates order book with initial sample data.
-- **Behavior**: Creates 30 bid and 30 ask orders around $100 base price
+### Backend Development
 
-## Usage Examples
-
-### Basic Order Book Operations
-
-```javascript
-import { OrderBook, Order } from './src/utils/OrderBook.js';
-
-// Create order book
-const orderBook = new OrderBook();
-
-// Add orders
-const buyOrder = new Order('buy_1', 99.50, 1000, 'bid');
-const sellOrder = new Order('sell_1', 100.50, 1500, 'ask');
-
-orderBook.addOrder(buyOrder);
-orderBook.addOrder(sellOrder);
-
-// Get market data
-const mboData = orderBook.getMBOData(10);
-const mbpData = orderBook.getMBPData(10);
-
-// Get market info
-const { bestBid, bestAsk } = orderBook.getBestBidAsk();
-const spreadInfo = orderBook.getSpreadInfo();
-
-console.log(`Best Bid: ${bestBid}, Best Ask: ${bestAsk}`);
-console.log(`Spread: ${spreadInfo.spread} (${spreadInfo.spreadBps} bps)`);
+```bash
+cd backend
+cargo check          # Check for compilation errors
+cargo test           # Run tests
+cargo clippy         # Lint code
+cargo fmt            # Format code
+cargo run --bin server  # Run development server
 ```
 
-### Real-time Market Simulation
+### Frontend Development
 
-```javascript
-// Initialize with sample data
-orderBook.initializeWithSampleData();
-
-// Simulate market activity
-setInterval(() => {
-  const activities = orderBook.simulateMarketActivity();
-  const marketData = orderBook.getMBPData();
-  
-  // Update UI with new market data
-  updateMarketDisplay(marketData);
-  logActivities(activities);
-}, 300); // 300ms intervals
+```bash
+cd frontend
+npm start            # Development server with hot reload
+npm test             # Run tests
+npm run build        # Production build
 ```
 
-### Order Lifecycle Management
+## Features
 
-```javascript
-// Add new order
-const order = new Order('trader_001', 99.75, 2000, 'bid');
-orderBook.addOrder(order);
+### Real-time Market Data
+- **Market By Order (MBO)**: Individual order tracking with IDs and timestamps
+- **Market By Price (MBP)**: Aggregated price levels with quantities
+- **Multiple symbols**: BTCUSD, ETHUSD, ADAUSD
+- **Live updates**: 300ms intervals with sequence numbers
 
-// Update order quantity
-orderBook.updateOrder('trader_001', 1500);
+### WebSocket Protocol
+- **Subscription management**: Multiple concurrent streams per client
+- **Multiplexed connections**: Different data types on same connection
+- **Automatic reconnection**: Client-side resilience
+- **Error handling**: Comprehensive error reporting
 
-// Check order age
-const orderObj = orderBook.orders.get('trader_001');
-console.log(`Order age: ${orderObj.getAge()}ms`);
+### Performance
+- **Rust backend**: Zero-cost abstractions and memory safety
+- **Async I/O**: Non-blocking operations throughout
+- **React optimization**: Memoized components and efficient updates
+- **Scalable architecture**: Concurrent client handling
 
-// Cancel order
-orderBook.removeOrder('trader_001');
+## API Documentation
+
+### WebSocket Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `ws://127.0.0.1:8080` | Main WebSocket endpoint |
+
+### Message Types
+
+| Client → Server | Server → Client |
+|----------------|-----------------|
+| Subscribe | MarketData |
+| Unsubscribe | Subscribed |
+| Ping | HeartBeat |
+| | Error |
+
+See individual README files for detailed protocol documentation.
+
+## Configuration
+
+### Backend Configuration
+
+```bash
+# Custom server address and logging
+cargo run --bin server -- --addr 0.0.0.0:9000 --log-level debug
 ```
 
-## Data Models
+### Frontend Configuration
 
-### MBO (Market By Order)
-- Shows individual orders with unique IDs
-- Maintains FIFO order priority within price levels
-- Includes order age for visualization
-- Suitable for detailed order flow analysis
+Update WebSocket URL in `frontend/src/services/WebSocketService.js`:
 
-### MBP (Market By Price)
-- Aggregates orders by price level
-- Shows total quantity and order count per level
-- Calculates average order age per level
-- Traditional market depth view
+```javascript
+this.url = 'ws://your-server-host:port';
+```
 
-## Performance Features
+## Testing
 
-- Efficient data structures using Maps and Sets
-- O(log n) price level ordering
-- Memory-efficient order tracking
-- Optimized for high-frequency updates
+### Backend Testing
 
-## Integration
+```bash
+cd backend
+cargo test                    # Unit tests
+cargo run --bin server       # Manual testing
+```
 
-This order book is designed to work with React components and supports:
-- Real-time market data updates
-- Professional trading interface visualization
-- WebAssembly integration for enhanced performance
-- Responsive design for multiple screen sizes
+### Frontend Testing
+
+```bash
+cd frontend
+npm test                      # React component tests
+npm start                     # Manual testing in browser
+```
+
+### Integration Testing
+
+1. Start backend server
+2. Start frontend application
+3. Verify WebSocket connection in browser console
+4. Test symbol switching and mode changes
+5. Monitor real-time data updates
+
+## Production Deployment
+
+### Backend Deployment
+
+```bash
+cd backend
+cargo build --release
+./target/release/server --addr 0.0.0.0:8080
+```
+
+### Frontend Deployment
+
+```bash
+cd frontend
+npm run build
+# Deploy 'build' directory to web server
+```
 
 ## Dependencies
 
-- Pure JavaScript implementation (ES6+)
-- No external dependencies required
-- Compatible with modern browsers and Node.js
+### Backend Dependencies
+- Tokio (async runtime)
+- Tungstenite (WebSocket)
+- Serde (JSON serialization)
+- DashMap (concurrent collections)
+- Tracing (logging)
+
+### Frontend Dependencies
+- React 18+
+- React Scripts (build tools)
+- Modern browser with WebSocket support
+
+## Contributing
+
+1. **Backend changes**: Work in `backend/` directory
+2. **Frontend changes**: Work in `frontend/` directory
+3. **Protocol changes**: Update both backend and frontend
+4. **Documentation**: Update relevant README files
+
+## License
+
+ISC
+
+## Support
+
+For issues:
+- **Backend**: Check `backend/README.md`
+- **Frontend**: Check `frontend/README.md`
+- **Integration**: Verify both services are running and network connectivity

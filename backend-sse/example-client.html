@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSE Market Depth Client</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            margin: 20px;
+            background: #1a1a1a;
+            color: #00ff00;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .controls {
+            margin-bottom: 20px;
+            padding: 10px;
+            background: #2a2a2a;
+            border-radius: 5px;
+        }
+        .controls input, .controls button {
+            margin: 5px;
+            padding: 8px;
+            background: #333;
+            color: #00ff00;
+            border: 1px solid #555;
+            border-radius: 3px;
+        }
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            background: #2a2a2a;
+            border-radius: 5px;
+        }
+        .connected { color: #00ff00; }
+        .disconnected { color: #ff4444; }
+        .stream-container {
+            display: flex;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .stream {
+            flex: 1;
+            border: 1px solid #555;
+            border-radius: 5px;
+            padding: 10px;
+            background: #2a2a2a;
+        }
+        .stream h3 {
+            margin-top: 0;
+            color: #ffaa00;
+        }
+        .order-book {
+            display: flex;
+            gap: 10px;
+        }
+        .bids, .asks {
+            flex: 1;
+        }
+        .bids h4 { color: #00aa00; }
+        .asks h4 { color: #aa0000; }
+        .level {
+            padding: 2px 5px;
+            margin: 1px 0;
+            font-size: 11px;
+            background: #333;
+            border-radius: 2px;
+        }
+        .bid-level { border-left: 3px solid #00aa00; }
+        .ask-level { border-left: 3px solid #aa0000; }
+        .events {
+            margin-top: 20px;
+            padding: 10px;
+            background: #2a2a2a;
+            border-radius: 5px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .event {
+            margin: 2px 0;
+            font-size: 11px;
+            opacity: 0.7;
+        }
+        .heartbeat { color: #555; }
+        .market-data { color: #00ff00; }
+        .connection-info { color: #ffaa00; }
+        .error { color: #ff4444; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>SSE Market Depth Client</h1>
+            <p>Multiplexed Server-Sent Events for Real-time Market Data</p>
+        </div>
+
+        <div class="controls">
+            <label>Server URL:</label>
+            <input type="text" id="serverUrl" value="http://127.0.0.1:8081/stream" style="width: 300px;">
+            <br>
+            <label>Streams:</label>
+            <input type="text" id="streams" value="BTCUSD:MBP:5,ETHUSD:MBO:3" style="width: 300px;">
+            <br>
+            <button onclick="connect()">Connect</button>
+            <button onclick="disconnect()">Disconnect</button>
+            <button onclick="clearData()">Clear Data</button>
+        </div>
+
+        <div class="status">
+            <div>Status: <span id="status" class="disconnected">Disconnected</span></div>
+            <div>Client ID: <span id="clientId">-</span></div>
+            <div>Events Received: <span id="eventCount">0</span></div>
+        </div>
+
+        <div class="stream-container" id="streamContainer">
+            <!-- Streams will be populated dynamically -->
+        </div>
+
+        <div class="events">
+            <h3>Event Log</h3>
+            <div id="eventLog"></div>
+        </div>
+    </div>
+
+    <script>
+        let eventSource = null;
+        let eventCount = 0;
+        let streams = {};
+
+        function connect() {
+            disconnect(); // Close existing connection
+
+            const serverUrl = document.getElementById('serverUrl').value;
+            const streamsParam = document.getElementById('streams').value;
+            const url = `${serverUrl}?streams=${encodeURIComponent(streamsParam)}`;
+
+            eventSource = new EventSource(url);
+            document.getElementById('status').textContent = 'Connecting...';
+            document.getElementById('status').className = 'connecting';
+
+            eventSource.onopen = function() {
+                document.getElementById('status').textContent = 'Connected';
+                document.getElementById('status').className = 'connected';
+                logEvent('Connection opened', 'connection-info');
+            };
+
+            eventSource.onerror = function(event) {
+                document.getElementById('status').textContent = 'Error/Disconnected';
+                document.getElementById('status').className = 'disconnected';
+                logEvent('Connection error', 'error');
+            };
+
+            eventSource.addEventListener('connection_info', function(event) {
+                const data = JSON.parse(event.data);
+                document.getElementById('clientId').textContent = data.client_id;
+                logEvent(`Connected as ${data.client_id}`, 'connection-info');
+            });
+
+            eventSource.addEventListener('market_data', function(event) {
+                const data = JSON.parse(event.data);
+                updateStreamData(data);
+                logEvent(`Market data: ${data.symbol} (${data.stream_id})`, 'market-data');
+            });
+
+            eventSource.addEventListener('heartbeat', function(event) {
+                const data = JSON.parse(event.data);
+                logEvent('Heartbeat', 'heartbeat');
+            });
+
+            eventSource.addEventListener('error', function(event) {
+                const data = JSON.parse(event.data);
+                logEvent(`Error: ${data.message}`, 'error');
+            });
+        }
+
+        function disconnect() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+            document.getElementById('status').textContent = 'Disconnected';
+            document.getElementById('status').className = 'disconnected';
+            logEvent('Disconnected', 'connection-info');
+        }
+
+        function clearData() {
+            document.getElementById('eventLog').innerHTML = '';
+            document.getElementById('streamContainer').innerHTML = '';
+            document.getElementById('eventCount').textContent = '0';
+            document.getElementById('clientId').textContent = '-';
+            eventCount = 0;
+            streams = {};
+        }
+
+        function updateStreamData(data) {
+            const streamId = data.stream_id;
+
+            // Create stream container if it doesn't exist
+            if (!streams[streamId]) {
+                createStreamContainer(streamId, data.symbol, data.data.format);
+                streams[streamId] = true;
+            }
+
+            // Update the order book data
+            const container = document.getElementById(`stream-${streamId}`);
+            if (container) {
+                updateOrderBook(container, data.data, data.data.format);
+            }
+        }
+
+        function createStreamContainer(streamId, symbol, format) {
+            const container = document.getElementById('streamContainer');
+            const streamDiv = document.createElement('div');
+            streamDiv.className = 'stream';
+            streamDiv.id = `stream-${streamId}`;
+            streamDiv.innerHTML = `
+                <h3>${symbol} (${format})</h3>
+                <div class="order-book">
+                    <div class="bids">
+                        <h4>Bids</h4>
+                        <div id="bids-${streamId}"></div>
+                    </div>
+                    <div class="asks">
+                        <h4>Asks</h4>
+                        <div id="asks-${streamId}"></div>
+                    </div>
+                </div>
+            `;
+            container.appendChild(streamDiv);
+        }
+
+        function updateOrderBook(container, data, format) {
+            const streamId = container.id.replace('stream-', '');
+            const bidsContainer = document.getElementById(`bids-${streamId}`);
+            const asksContainer = document.getElementById(`asks-${streamId}`);
+
+            if (format === 'MBP') {
+                // Market By Price
+                bidsContainer.innerHTML = data.bids.map(level =>
+                    `<div class="level bid-level">
+                        ${level.price.toFixed(2)} × ${level.quantity} (${level.order_count})
+                        <small>Total: ${level.total_quantity}</small>
+                    </div>`
+                ).join('');
+
+                asksContainer.innerHTML = data.asks.map(level =>
+                    `<div class="level ask-level">
+                        ${level.price.toFixed(2)} × ${level.quantity} (${level.order_count})
+                        <small>Total: ${level.total_quantity}</small>
+                    </div>`
+                ).join('');
+            } else {
+                // Market By Order
+                bidsContainer.innerHTML = data.bids.map(order =>
+                    `<div class="level bid-level">
+                        ${order.price.toFixed(2)} × ${order.quantity}
+                        <small>ID: ${order.order_id.substring(0, 8)}... Age: ${order.age_ms}ms</small>
+                    </div>`
+                ).join('');
+
+                asksContainer.innerHTML = data.asks.map(order =>
+                    `<div class="level ask-level">
+                        ${order.price.toFixed(2)} × ${order.quantity}
+                        <small>ID: ${order.order_id.substring(0, 8)}... Age: ${order.age_ms}ms</small>
+                    </div>`
+                ).join('');
+            }
+        }
+
+        function logEvent(message, type) {
+            eventCount++;
+            document.getElementById('eventCount').textContent = eventCount;
+
+            const eventLog = document.getElementById('eventLog');
+            const eventDiv = document.createElement('div');
+            eventDiv.className = `event ${type}`;
+            eventDiv.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+
+            eventLog.appendChild(eventDiv);
+            eventLog.scrollTop = eventLog.scrollHeight;
+
+            // Keep only last 100 events
+            while (eventLog.children.length > 100) {
+                eventLog.removeChild(eventLog.firstChild);
+            }
+        }
+    </script>
+</body>
+</html>

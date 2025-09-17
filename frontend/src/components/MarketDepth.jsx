@@ -1,82 +1,112 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { OrderBook } from '../utils/OrderBook';
+import WebSocketService from '../services/WebSocketService';
 import './MarketDepth.css';
 
 const MarketDepth = () => {
     const [displayMode, setDisplayMode] = useState('MBP'); // 'MBO' or 'MBP'
+    const [symbol, setSymbol] = useState('BTCUSD');
     const [bids, setBids] = useState([]);
     const [asks, setAsks] = useState([]);
     const [spread, setSpread] = useState(0);
     const [midPrice, setMidPrice] = useState(0);
     const [spreadBps, setSpreadBps] = useState(0);
-    const [orderBook] = useState(() => new OrderBook());
     const [lastUpdate, setLastUpdate] = useState(Date.now());
     const [activityLog, setActivityLog] = useState([]);
+    const [connectionStatus, setConnectionStatus] = useState('Disconnected');
+    const [sequence, setSequence] = useState(0);
+    const wsService = useRef(new WebSocketService());
     const animationRef = useRef();
 
-    // Initialize order book
+    // Initialize WebSocket connection
     useEffect(() => {
-        orderBook.initializeWithSampleData();
-        // Initial data load
-        const data = orderBook.getMBPData(20);
-        setBids(data.bids);
-        setAsks(data.asks);
+        const connectWebSocket = async () => {
+            try {
+                setConnectionStatus('Connecting...');
+                await wsService.current.connect();
+                setConnectionStatus('Connected');
+            } catch (error) {
+                console.error('Failed to connect to WebSocket:', error);
+                setConnectionStatus('Connection Failed');
+            }
+        };
 
-        const spreadInfo = orderBook.getSpreadInfo();
-        if (spreadInfo.spread !== null) {
-            setSpread(spreadInfo.spread);
-            setMidPrice(spreadInfo.midPrice);
-            setSpreadBps(spreadInfo.spreadBps);
-        }
-        setLastUpdate(Date.now());
+        connectWebSocket();
+
+        return () => {
+            wsService.current.disconnect();
+        };
     }, []);
 
-    // Update display data based on current mode
-    const updateDisplayData = useCallback(() => {
+    // Handle market data from WebSocket
+    const handleMarketData = useCallback((message) => {
         try {
-            const data = displayMode === 'MBO' ?
-                orderBook.getMBOData(20) :
-                orderBook.getMBPData(20);
+            const { data, sequence: msgSequence, timestamp } = message;
 
-            setBids(data.bids);
-            setAsks(data.asks);
-
-            // Update spread info
-            const spreadInfo = orderBook.getSpreadInfo();
-            if (spreadInfo.spread !== null) {
-                setSpread(spreadInfo.spread);
-                setMidPrice(spreadInfo.midPrice);
-                setSpreadBps(spreadInfo.spreadBps);
+            if (data.format === 'MBO' && displayMode === 'MBO') {
+                setBids(data.bids || []);
+                setAsks(data.asks || []);
+            } else if (data.format === 'MBP' && displayMode === 'MBP') {
+                setBids(data.bids || []);
+                setAsks(data.asks || []);
             }
 
-            setLastUpdate(Date.now());
+            // Calculate spread from best bid/ask
+            const bestBid = data.bids?.[0]?.price;
+            const bestAsk = data.asks?.[0]?.price;
+
+            if (bestBid && bestAsk) {
+                const spreadValue = bestAsk - bestBid;
+                const midPriceValue = (bestBid + bestAsk) / 2;
+                const spreadBpsValue = (spreadValue / midPriceValue) * 10000;
+
+                setSpread(spreadValue);
+                setMidPrice(midPriceValue);
+                setSpreadBps(spreadBpsValue);
+            }
+
+            setSequence(msgSequence);
+            setLastUpdate(new Date(timestamp).getTime());
         } catch (error) {
-            console.error('Error updating display data:', error);
+            console.error('Error processing market data:', error);
         }
     }, [displayMode]);
 
-    // Market activity simulation
+    // Subscribe to market data when mode or symbol changes
     useEffect(() => {
-        const simulateActivity = () => {
-            const activities = orderBook.simulateMarketActivity();
-            setActivityLog(prev => [...activities, ...prev].slice(0, 100)); // Keep last 100 activities
-            updateDisplayData();
-        };
+        if (wsService.current.getConnectionStatus().isConnected) {
+            // Unsubscribe from previous stream
+            const oldStreamId = `${symbol}_${displayMode === 'MBO' ? 'MBP' : 'MBO'}`;
+            wsService.current.unsubscribe(oldStreamId);
 
-        // Simulate market activity every 300ms
-        const interval = setInterval(simulateActivity, 300);
+            // Subscribe to new stream
+            const streamId = `${symbol}_${displayMode}`;
+            wsService.current.subscribe(
+                streamId,
+                symbol,
+                displayMode,
+                20,
+                handleMarketData
+            );
+        }
+    }, [displayMode, symbol, handleMarketData]);
 
-        return () => {
-            clearInterval(interval);
-        };
-    }, [updateDisplayData]);
 
 
-
-    // Update display when mode changes
+    // Monitor connection status
     useEffect(() => {
-        updateDisplayData();
-    }, [updateDisplayData]);
+        const interval = setInterval(() => {
+            const status = wsService.current.getConnectionStatus();
+            if (status.isConnected) {
+                setConnectionStatus('Connected');
+            } else if (status.reconnectAttempts > 0) {
+                setConnectionStatus(`Reconnecting... (${status.reconnectAttempts})`);
+            } else {
+                setConnectionStatus('Disconnected');
+            }
+        }, 1000);
+
+        return () => clearInterval(interval);
+    }, []);
 
     // Animation loop for smooth updates
     useEffect(() => {
@@ -102,14 +132,19 @@ const MarketDepth = () => {
         return `${Math.floor(seconds / 3600)}h`;
     };
 
-    // Calculate cumulative data for MBP mode
+    // Calculate cumulative data for display
     const calculateCumulative = (entries) => {
         if (displayMode === 'MBO') {
-            // For MBO mode, ensure each entry has necessary properties
+            // For MBO mode, no cumulative calculation needed
             return entries.map(entry => ({
                 ...entry,
-                total: entry.quantity // For MBO, total equals quantity
+                total: entry.quantity
             }));
+        }
+
+        // For MBP mode, use total_quantity if available, otherwise calculate cumulative
+        if (entries.length > 0 && entries[0].total_quantity !== undefined) {
+            return entries; // Already has cumulative data from server
         }
 
         let total = 0;
@@ -123,34 +158,54 @@ const MarketDepth = () => {
     const processedAsks = calculateCumulative(asks);
 
     const maxTotal = displayMode === 'MBP' ? Math.max(
-        ...processedBids.map(b => b.total || b.quantity),
-        ...processedAsks.map(a => a.total || a.quantity)
+        ...processedBids.map(b => b.total_quantity || b.total || b.quantity || 0),
+        ...processedAsks.map(a => a.total_quantity || a.total || a.quantity || 0),
+        1 // Ensure we have at least 1 to avoid division by zero
     ) : Math.max(
-        ...processedBids.map(b => b.quantity),
-        ...processedAsks.map(a => a.quantity)
+        ...processedBids.map(b => b.quantity || 0),
+        ...processedAsks.map(a => a.quantity || 0),
+        1 // Ensure we have at least 1 to avoid division by zero
     );
 
     return (
         <div className="market-depth">
             <div className="market-depth-header">
-                <h2>Market Depth</h2>
-                <div className="mode-controls">
-                    <button
-                        className={`mode-btn ${displayMode === 'MBP' ? 'active' : ''}`}
-                        onClick={() => setDisplayMode('MBP')}
-                    >
-                        MBP
-                    </button>
-                    <button
-                        className={`mode-btn ${displayMode === 'MBO' ? 'active' : ''}`}
-                        onClick={() => setDisplayMode('MBO')}
-                    >
-                        MBO
-                    </button>
+                <h2>Market Depth - Rust Server</h2>
+                <div className="controls-section">
+                    <div className="symbol-selector">
+                        <label>Symbol:</label>
+                        <select
+                            value={symbol}
+                            onChange={(e) => setSymbol(e.target.value)}
+                            className="symbol-select"
+                        >
+                            <option value="BTCUSD">BTC/USD</option>
+                            <option value="ETHUSD">ETH/USD</option>
+                            <option value="ADAUSD">ADA/USD</option>
+                        </select>
+                    </div>
+                    <div className="mode-controls">
+                        <button
+                            className={`mode-btn ${displayMode === 'MBP' ? 'active' : ''}`}
+                            onClick={() => setDisplayMode('MBP')}
+                        >
+                            MBP
+                        </button>
+                        <button
+                            className={`mode-btn ${displayMode === 'MBO' ? 'active' : ''}`}
+                            onClick={() => setDisplayMode('MBO')}
+                        >
+                            MBO
+                        </button>
+                    </div>
                 </div>
                 <div className="market-stats">
+                    <span className={`connection-status ${connectionStatus.toLowerCase().replace(/[^a-z]/g, '')}`}>
+                        Status: {connectionStatus}
+                    </span>
                     <span>Spread: {spread.toFixed(4)} ({spreadBps.toFixed(1)} bps)</span>
                     <span>Mid: {midPrice.toFixed(4)}</span>
+                    <span>Seq: {sequence}</span>
                     <span>Updated: {formatTimeAgo(lastUpdate)}</span>
                 </div>
             </div>
@@ -213,19 +268,16 @@ const MarketDepth = () => {
                 </div>
             </div>
 
-            {/* Activity Log */}
-            <div className="activity-log">
-                <h3>Recent Activity</h3>
-                <div className="activity-items">
-                    {activityLog.slice(0, 10).map((activity, index) => (
-                        <div key={index} className={`activity-item ${activity.type}`}>
-                            <span className="activity-type">{activity.type.toUpperCase()}</span>
-                            <span className="activity-side">{activity.side || 'N/A'}</span>
-                            <span className="activity-price">${activity.price?.toFixed(4) || 'N/A'}</span>
-                            <span className="activity-quantity">{activity.quantity?.toLocaleString() || 'N/A'}</span>
-                            <span className="activity-id">{activity.orderId ? activity.orderId.slice(-6) : 'N/A'}</span>
-                        </div>
-                    ))}
+            {/* Connection Info */}
+            <div className="connection-info">
+                <div className="connection-details">
+                    <h3>Server Connection</h3>
+                    <div className="connection-stats">
+                        <span>WebSocket URL: ws://127.0.0.1:8080</span>
+                        <span>Current Symbol: {symbol}</span>
+                        <span>Data Type: {displayMode}</span>
+                        <span>Status: {connectionStatus}</span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -234,7 +286,8 @@ const MarketDepth = () => {
 
 // MBP (Market By Price) Row Component
 const MBPRow = React.memo(({ level, maxTotal, isBid }) => {
-    const percentage = (level.total / maxTotal) * 100;
+    const total = level.total_quantity || level.total || level.quantity;
+    const percentage = (total / maxTotal) * 100;
 
     return (
         <div className={`depth-row mbp-row ${isBid ? 'bid' : 'ask'}`}>
@@ -247,8 +300,8 @@ const MBPRow = React.memo(({ level, maxTotal, isBid }) => {
             />
             <span className="price">{level.price.toFixed(4)}</span>
             <span className="quantity">{level.quantity.toLocaleString()}</span>
-            <span className="total">{level.total.toLocaleString()}</span>
-            <span className="order-count">{level.orderCount}</span>
+            <span className="total">{total.toLocaleString()}</span>
+            <span className="order-count">{level.order_count || level.orderCount || 0}</span>
         </div>
     );
 });
@@ -257,11 +310,12 @@ const MBPRow = React.memo(({ level, maxTotal, isBid }) => {
 const MBORow = React.memo(({ order, maxQuantity, isBid }) => {
     // Defensive checks for order properties
     if (!order) return null;
-    
+
     const quantity = order.quantity || 0;
-    const age = order.age || 0;
+    const age = order.age_ms || order.age || 0;
     const price = order.price || 0;
-    
+    const orderId = order.order_id || order.orderId;
+
     const percentage = (quantity / maxQuantity) * 100;
     const ageColor = age < 10000 ? '#00ff00' :
         age < 30000 ? '#ffff00' : '#ff6600';
@@ -283,8 +337,8 @@ const MBORow = React.memo(({ order, maxQuantity, isBid }) => {
             />
             <span className="price">{price.toFixed(4)}</span>
             <span className="quantity">{quantity.toLocaleString()}</span>
-            <span className="order-id" title={order.orderId || 'N/A'}>
-                {order.orderId ? order.orderId.slice(-8) : 'N/A'}
+            <span className="order-id" title={orderId || 'N/A'}>
+                {orderId ? orderId.slice(-8) : 'N/A'}
             </span>
             <span className="age" style={{ color: ageColor }}>
                 {formatAge(age)}

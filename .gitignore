@@ -104,3 +104,25 @@ temp/
 
 # Local development files
 *.local
+
+# Rust build artifacts
+target/
+debug/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# Additional OS files
+desktop.ini
+
+# Database files (if any)
+*.db
+*.sqlite
+*.sqlite3
+
+# Configuration overrides
+config.local.*
+
+# Backup files
+*.bak
+*.backup
